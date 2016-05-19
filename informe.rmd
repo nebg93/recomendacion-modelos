@@ -1,0 +1,239 @@
+---
+title: 'Tarea #04'
+author: "Nadia Bastidas"
+date: "08 de mayo de 2016"
+output: html_document
+---
+
+##Sistemas de Recomendacion y Evaluacion de Modelos
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Sistema de Recomendacion
+
+```{r, message=FALSE, warning=FALSE}
+#Se Cargan las librerías y la data
+
+library(arules)
+library(arulesViz)
+
+p<-read.csv("periodico.csv")
+
+```
+
+####Transacciones Bot
+
+```{r}
+#Se realiza la resta de los tiempos de entrada y salida de los usuarios
+
+p$dif<-as.numeric(difftime(p$exit, p$entry))
+
+#Se colocan en la variable "bot" todas aquellas transacciones que duraron menos de 20 segundos
+
+bot<-p[p$dif<=20,]
+dim(bot)
+
+#Se observan 2302 transacciones bot.
+
+#Se eliminan del dataset aquellas transacciones que fueron clasificadas como bots
+
+p<-p[p$dif>20,]
+
+```
+
+####Se realiza el cambio en la columna articles
+
+Del archivo ejemplo.csv y la informacion dada por el periodico se puede obtener la siguiente clasificacion:
+
+- Son 81 articulos
+
+- Del articulo 1 al 9, tienen contenido "Deportes"
+
+- Del articulo 10 al 18, tienen contenido "Politica"
+
+- Del articulo 19 al 27, tienen contenido "Variedades"
+
+- Del articulo 28 al 36, tienen contenido "Internacional"
+
+- Del articulo 37 al 45, tienen contenido "Nacional"
+
+- Del articulo 46 al 54, tienen contenido "Sucesos"
+
+- Del articulo 55 al 63, tienen contenido "Comunidad"
+
+- Del articulo 64 al 72, tienen contenido "Negocios"
+
+- Del articulo 73 al 81, tienen contenido "Opinion"
+
+
+```{r}
+
+#Nombramos la 5ta columna como "items" en lugar de "articles"
+
+names(p)[5]<-"items"
+
+#Dejamos en esta columna únicamente los números de los items separados por coma
+
+p$items<-gsub("item", "", p$items)
+p$items<-gsub("(\\{)", "", p$items)
+p$items<-gsub("(\\})", "", p$items)
+p$items<-gsub(",", " ", p$items)
+
+#Utilizamos la funcion cambio() y clase() para colocar los articulos
+
+cambio<-function(x){
+  x <- strsplit(as.character(x), " ")
+  x <- as.numeric(unlist(x))
+  x <- sapply(x, clase)
+  x <- paste(x, collapse=',')
+  return(x)
+}
+
+clase<-function(x){
+  if (x<=9) {
+    articulo<-paste("articulo", x, sep = "")
+    res <- paste("deportes/", articulo, sep = "")
+  }
+  else if (x<=18) {
+    articulo<-paste("articulo", x-9, sep = "")
+    res <- paste("politica/", articulo, sep = "")
+  }
+  else if (x<=27) {
+    articulo<-paste("articulo", x-18, sep = "")
+    res <- paste("variedades/", articulo, sep = "")
+  }
+  else if (x<=36) {
+    articulo<-paste("articulo", x-27, sep = "")
+    res <- paste("internacional/", articulo, sep = "")
+  }
+  else if (x<=45) {
+    articulo<-paste("articulo", x-36, sep = "")
+    res <- paste("nacional/", articulo, sep = "")
+  }
+  else if (x<=54) {
+    articulo<-paste("articulo", x-45, sep = "")
+    res <- paste("sucesos/", articulo, sep = "")
+  }
+  else if (x<=63) {
+    articulo<-paste("articulo", x-54, sep = "")
+    res <- paste("comunidad/", articulo, sep = "")
+  }
+  else if (x<=72) {
+    articulo<-paste("articulo", x-63, sep = "")
+    res <- paste("negocios/", articulo, sep = "")
+  }
+  else if (x<=81) {
+    articulo<-paste("articulo", x-72, sep = "")
+    res <- paste("opinion/", articulo, sep = "")
+  }
+  return(res)
+}
+
+p$articles<-sapply(p$items, cambio)
+p$items<-NULL
+
+```
+
+
+####Tipos de Usuario
+
+Se buscarán las reglas de asociación que cumple este set de datos. Para esto utilizaremos un soporte y confianza determinados.
+
+Se define como soporte "supp(X)" de un  itemset como la proporcion de transacciones el data set las cuales contienen dicho itemset
+
+Por otro lado, la confianza de una regla es definida como conf(X => Y) = supp(X U Y)/supp(X).
+
+Se utilizará entonces un valor muy bajo de soporte, pues si este número es muy alto no se generarán suficientes reglas. Esto sucede porque se requeriere entonces que el itemset se repita muchas veces.
+
+Definimos una confianza de 0.7 pues este valor nos dirá cuales de todas las reglas seleccionadas tienen una mayor veracidad.
+
+Utilizamos el algoritmo apriori para esto
+
+```{r}
+#Creamos la matriz de transacciones
+
+#y<-as.data.frame(p$articles)
+#names(y)[1]<-"articles"
+#transactions <- as(y,"transactions")
+
+write(p$articles,file="transactions")
+
+transactions <- read.transactions("transactions", format="basket", sep=",")
+
+rules<-apriori(data = transactions, parameter = list(supp=0.00002, conf=0.8))
+inspect(head(rules))
+
+```
+
+Se realizaron pruebas con el soporte y confianza variando entre numeros desde 0.00005 hasta 0.001, en el soporte; y 0.5 a 0.8 en la confianza. Dado que se consiguieron 718 reglas y basada en las definiciones de soporte y confianza se colocaron con valores de 0.00002 y 0.8 respectivamente.
+
+Se crearon un total de 718 reglas.
+
+Se procede a evaluar las mismas para la deteccion de los tipos de usuarios. Para esto se utilizará clustering jerárquico y k-medias con una medida de distancia apropiada para los conjuntos de items.
+
+```{r, message=FALSE, warning=FALSE}
+#Cargamos la librería stringDist
+
+#install.packages("stringdist")
+library(stringdist)
+
+consecuente <- inspect(unique(rules@rhs))
+cons<-consecuente
+consecuente <- as.character(consecuente$items)
+
+dist <- stringdistmatrix(consecuente)
+#plot(dist)
+hc <- hclust(dist, method="single")
+ct <- cutree(hc, k=8)
+plot(ct, col=ct, pch=19)
+
+cons$class <- ct
+
+#Proporción de los grupos
+
+table(cons$class)
+
+```
+
+Se consiguen entonces 8 grupos de usuarios, los cuales están clasificados por el consecuente de su regla. Esto quiere decir que si las personas buscan un tema, puede ser que les interese otro con una cierta confianza. A aquellos usuarios que con cierta confianza le interesaran algunos articulos se les agrupa entonces.
+
+
+####Recomendacion
+
+Para recomendar a algun usuario nuevo se generan las reglas de asociacion creadas en el punto anterior. Una vez que tenemos las reglas, con un soporte y confianza elegidos segun los criterios ya nombrados, se procede a confirmar si existen reglas que tengan como antecedente las transacciones dadas por el usuario nuevo al sistema. Por ejemplo:
+
+```{r}
+
+new.user <- c("deportes/articulo2")
+
+reglas <- subset(rules, lhs %ain% new.user)
+inspect(head(reglas, by="conf"))
+inspect(head(reglas, by="lift"))
+
+```
+
+Dado que muchas reglas tenían la confianza en 1 se eligio recomendar los consecuentes de aquellas en la cual el indice "lift" fuese mas alto.
+
+
+####Conocer las 10 visitas con mayor tiempo de estadía en la página y las 10 visitas con menor tiempo de estadía en la página
+
+```{r}
+#Usuarios con mayor tiempo en la pagina
+mayor<-p[order(p$dif, decreasing = TRUE),]
+mayor[1:10,]
+
+#Usuarios con menor tiempo en la pagina
+menor<-p[order(p$dif, decreasing = FALSE),]
+menor[1:10,]
+```
+
+
+####Conocer las 10 transacciones con mayor número de apariciones en el dataset.
+
+```{r}
+aparece <- (tail(sort(table(p$articles)), 10))
+aparece
+```
+
